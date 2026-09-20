@@ -1,221 +1,352 @@
-<!DOCTYPE html>
-<html lang="az">
-<head>
-    <meta charset="UTF-8">
-    <title>Winterfell 3D - Gəzinti Oyunu</title>
-    <style>
-        body { margin: 0; overflow: hidden; background-color: #0b131e; font-family: sans-serif; }
-        #instructions {
-            position: absolute;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            text-align: center;
-            pointer-events: none;
-            letter-spacing: 1px;
-        }
-    </style>
-</head>
-<body>
-    <div id="instructions">Oynamaq üçün ekrana klikləyin<br>Hərəkət: <b>W, A, S, D</b> | Baxış: <b>Siçan</b> | Çıxmaq: <b>ESC</b></div>
+# -*- coding: utf-8 -*-
+"""
+OYUN SEHNESI GENERATORU  |  Blender 3.6 - 4.x
+---------------------------------------------
+Qurur:
+  1) Low-poly karakter (govde + qol + ayaq) ve ona baglanmis skelet (armature)
+  2) Sade yeriyis animasiyasi (24 kadr, loop)
+  3) Tepelikli erazi (terrain) - procedural displace
+  4) Tesadufi binalar - eraziye oturdulur
+  5) Hamisini tek .glb faylina ixrac edir (Unity / Unreal / Godot / web)
 
-    <!-- Three.js və PointerLockControls kitabxanaları -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+ISTIFADE: Blender -> Scripting sekmesi -> New -> bu kodu yapisdir -> Run Script (Alt+P)
+"""
 
-    <script>
-        let scene, camera, renderer, controls;
-        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-        let prevTime = performance.now();
-        let velocity = new THREE.Vector3();
-        let direction = new THREE.Vector3();
+import bpy
+import bmesh
+import math
+import random
+from mathutils import Vector
 
-        init();
-        animate();
+# ============================================================
+# AYARLAR - burani deyisib neticeni idare edirsen
+# ============================================================
+SEED            = 7          # eyni reqem = eyni sehne (tekrar alinir)
+TERRAIN_SIZE    = 60.0       # erazi olcusu (metr)
+TERRAIN_CUTS    = 80         # erazi detali (cox = agir)
+TERRAIN_HEIGHT  = 3.0        # tepelerin hundurluyu
+BUILDING_COUNT  = 14         # bina sayi
+EXPORT_GLB      = True       # False etsen ixrac olunmur
+EXPORT_PATH     = "//oyun_sehnesi.glb"   # "//" = .blend faylinin yani
 
-        function init() {
-            // Səhnə və duman effekti (qış havası üçün)
-            scene = new THREE.Scene();
-            scene.background = new THREE.Color(0xd0d8e0);
-            scene.fog = new THREE.FogExp2(0xd0d8e0, 0.015);
+random.seed(SEED)
 
-            // Kamera
-            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.set(0, 3, 40);
 
-            // Renderer
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.shadowMap.enabled = true;
-            document.body.appendChild(renderer.domElement);
+# ============================================================
+# KOMEKCI FUNKSIYALAR
+# ============================================================
+def sehneni_temizle():
+    """Kohne obyektleri ve istifadesiz datani silir."""
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.select_all(action='SELECT')
+    bpy.ops.object.delete(use_global=False)
+    for blok in (bpy.data.meshes, bpy.data.materials,
+                 bpy.data.armatures, bpy.data.actions, bpy.data.textures):
+        for item in list(blok):
+            if item.users == 0:
+                blok.remove(item)
 
-            // İşıqlandırma
-            const ambientLight = new THREE.AmbientLight(0xb0c4de, 0.7);
-            scene.add(ambientLight);
 
-            const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
-            sunLight.position.set(50, 100, 50);
-            sunLight.castShadow = true;
-            scene.add(sunLight);
+def material_yarat(ad, reng, roughness=0.75, metallic=0.0):
+    """Principled BSDF esasli sade material."""
+    mat = bpy.data.materials.get(ad)
+    if mat is None:
+        mat = bpy.data.materials.new(ad)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = (*reng, 1.0)
+        bsdf.inputs["Roughness"].default_value = roughness
+        bsdf.inputs["Metallic"].default_value = metallic
+    return mat
 
-            // İdarəetmə (FPS Controls)
-            controls = new THREE.PointerLockControls(camera, document.body);
-            document.addEventListener('click', () => { controls.lock(); });
-            scene.add(controls.getObject());
 
-            // Klaviatura dinləyiciləri
-            const onKeyDown = function (event) {
-                switch (event.code) {
-                    case 'KeyW': moveForward = true; break;
-                    case 'KeyA': moveLeft = true; break;
-                    case 'KeyS': moveBackward = true; break;
-                    case 'KeyD': moveRight = true; break;
-                }
-            };
-            const onKeyUp = function (event) {
-                switch (event.code) {
-                    case 'KeyW': moveForward = false; break;
-                    case 'KeyA': moveLeft = false; break;
-                    case 'KeyS': moveBackward = false; break;
-                    case 'KeyD': moveRight = false; break;
-                }
-            };
-            document.addEventListener('keydown', onKeyDown);
-            document.addEventListener('keyup', onKeyUp);
+def material_ver(obj, mat):
+    obj.data.materials.clear()
+    obj.data.materials.append(mat)
 
-            // --- QALA MÜHİTİNİN QURULMASI ---
 
-            // 1. Qarlı Torpaq
-            const groundGeo = new THREE.PlaneGeometry(300, 300);
-            const groundMat = new THREE.MeshStandardMaterial({ color: 0xecf0f1, roughness: 0.9 });
-            const ground = new THREE.Mesh(groundGeo, groundMat);
-            ground.rotation.x = -Math.PI / 2;
-            scene.add(ground);
+def kub(ad, yer, olcu):
+    """Merkezi 'yer'-de olan, (x,y,z) olculu kub qaytarir."""
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=yer)
+    obj = bpy.context.object
+    obj.name = ad
+    obj.scale = Vector(olcu)
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    return obj
 
-            // 2. Əsas Qala Divarları (Həyət forması)
-            const wallMat = new THREE.MeshStandardMaterial({ color: 0x555b6e, roughness: 0.8 });
-            
-            function createWall(x, z, width, depth, height = 8) {
-                const wallGeo = new THREE.BoxGeometry(width, height, depth);
-                const wall = new THREE.Mesh(wallGeo, wallMat);
-                wall.position.set(x, height / 2, z);
-                scene.add(wall);
-            }
 
-            // Xarici divarların forması (şəkildəki kimi uzunsov qala)
-            createWall(0, -25, 50, 4); // Şimal divarı
-            createWall(-25, 0, 4, 50); // Qərb divarı
-            createWall(25, 0, 4, 50);  // Şərq divarı
-            createWall(0, 25, 50, 4);  // Cənub divarı
+# ============================================================
+# 1) KARAKTER GEOMETRIYASI
+# ============================================================
+def karakter_yarat():
+    hisseler = []
 
-            // 3. Qüllələr (Künclərdə)
-            const towerMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
-            const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.6 });
+    # (ad, merkez, olcu)
+    plan = [
+        ("govde",     (0.00, 0.00, 1.15), (0.55, 0.30, 0.75)),
+        ("bas",       (0.00, 0.00, 1.72), (0.36, 0.34, 0.36)),
+        ("qol_sol",   (0.42, 0.00, 1.18), (0.18, 0.18, 0.72)),
+        ("qol_sag",   (-0.42, 0.00, 1.18), (0.18, 0.18, 0.72)),
+        ("ayaq_sol",  (0.16, 0.00, 0.40), (0.22, 0.22, 0.80)),
+        ("ayaq_sag",  (-0.16, 0.00, 0.40), (0.22, 0.22, 0.80)),
+    ]
+    for ad, yer, olcu in plan:
+        hisseler.append(kub(ad, yer, olcu))
 
-            function createTower(x, z) {
-                const towerGeo = new THREE.CylinderGeometry(3, 3, 12, 16);
-                const tower = new THREE.Mesh(towerGeo, towerMat);
-                tower.position.set(x, 6, z);
-                scene.add(tower);
+    # hamisini birlesdir
+    bpy.ops.object.select_all(action='DESELECT')
+    for h in hisseler:
+        h.select_set(True)
+    bpy.context.view_layer.objects.active = hisseler[0]
+    bpy.ops.object.join()
 
-                // Qüllənin qarlı konus damı
-                const roofGeo = new THREE.ConeGeometry(3.5, 5, 16);
-                const roof = new THREE.Mesh(roofGeo, roofMat);
-                roof.position.set(x, 14.5, z);
-                scene.add(roof);
-            }
+    karakter = bpy.context.object
+    karakter.name = "Karakter"
 
-            createTower(-25, -25);
-            createTower(25, -25);
-            createTower(-25, 25);
-            createTower(25, 25);
+    # kunclari azca yumsalt (low-poly gorunus qalir)
+    bevel = karakter.modifiers.new("Bevel", 'BEVEL')
+    bevel.width = 0.02
+    bevel.segments = 2
 
-            // 4. Həyətdəki Orta əsr evləri
-            const houseMat = new THREE.MeshStandardMaterial({ color: 0x7c4d33, roughness: 0.9 });
-            const snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+    material_ver(karakter, material_yarat("MAT_Karakter", (0.85, 0.35, 0.25)))
+    karakter.location = (0.0, 0.0, 0.0)
+    return karakter
 
-            function createHouse(x, z) {
-                const base = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), houseMat);
-                base.position.set(x, 2, z);
-                scene.add(base);
 
-                const roof = new THREE.Mesh(new THREE.ConeGeometry(5, 3, 4), snowRoofMat);
-                roof.rotation.y = Math.PI / 4;
-                roof.position.set(x, 5.5, z);
-                scene.add(roof);
-            }
+# ============================================================
+# 2) SKELET (ARMATURE)
+# ============================================================
+def skelet_yarat():
+    bpy.ops.object.armature_add(enter_editmode=True, location=(0, 0, 0))
+    arm_obj = bpy.context.object
+    arm_obj.name = "Skelet"
+    arm_obj.data.name = "SkeletData"
 
-            createHouse(-10, -5);
-            createHouse(10, -5);
-            createHouse(-10, 8);
-            createHouse(10, 8);
+    eb = arm_obj.data.edit_bones
+    eb.remove(eb[0])   # default sumuyu sil
 
-            // 5. Godswood (Müqəddəs Bağ və Qırmızı Yarpaqlı Weirwood Ağacı)
-            // Bağın dairəvi divarı
-            const godswoodWallGeo = new THREE.CylinderGeometry(14, 14, 5, 32, 1, true);
-            const godswoodWall = new THREE.Mesh(godswoodWallGeo, wallMat);
-            godswoodWall.position.set(-35, 2.5, 0);
-            scene.add(godswoodWall);
+    def sumuk(ad, bas, son, valideyn=None, envelope=0.28):
+        b = eb.new(ad)
+        b.head = Vector(bas)
+        b.tail = Vector(son)
+        b.envelope_distance = envelope
+        if valideyn:
+            b.parent = eb[valideyn]
+        return b
 
-            // Weirwood Ağacı (Ağ gövdə, qırmızı yarpaqlar)
-            const trunkMat = new THREE.MeshStandardMaterial({ color: 0xdcdde1, roughness: 0.8 });
-            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 10, 8), trunkMat);
-            trunk.position.set(-35, 5, 0);
-            scene.add(trunk);
+    sumuk("Kok",     (0, 0, 0.80), (0, 0, 1.05), envelope=0.35)
+    sumuk("Bel",     (0, 0, 1.05), (0, 0, 1.50), "Kok",  envelope=0.40)
+    sumuk("Bas",     (0, 0, 1.52), (0, 0, 1.92), "Bel",  envelope=0.32)
 
-            const leavesMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.6 }); // Qırmızı yarpaqlar
-            const leaves = new THREE.Mesh(new THREE.SphereGeometry(5, 8, 8), leavesMat);
-            leaves.position.set(-35, 11, 0);
-            scene.add(leaves);
+    sumuk("Qol_L",   (0.42, 0, 1.50), (0.42, 0, 0.82), "Bel", envelope=0.22)
+    sumuk("Qol_R",   (-0.42, 0, 1.50), (-0.42, 0, 0.82), "Bel", envelope=0.22)
 
-            // Həyətdəki Tonqal (Ocaq)
-            const fireMat = new THREE.MeshBasicMaterial({ color: 0xe67e22 });
-            const fire = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 8), fireMat);
-            fire.position.set(0, 0.5, 0);
-            scene.add(fire);
+    sumuk("Ayaq_L",  (0.16, 0, 0.80), (0.16, 0, 0.02), "Kok", envelope=0.26)
+    sumuk("Ayaq_R",  (-0.16, 0, 0.80), (-0.16, 0, 0.02), "Kok", envelope=0.26)
 
-            // Tonqalın işığı
-            const fireLight = new THREE.PointLight(0xff5722, 2, 15);
-            fireLight.position.set(0, 1.5, 0);
-            scene.add(fireLight);
+    bpy.ops.object.mode_set(mode='OBJECT')
+    return arm_obj
 
-            window.addEventListener('resize', onWindowResize);
-        }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
+def skeleti_bagla(karakter, skelet):
+    """Once avtomatik ceki, alinmasa envelope ile baglayir."""
+    bpy.ops.object.select_all(action='DESELECT')
+    karakter.select_set(True)
+    skelet.select_set(True)
+    bpy.context.view_layer.objects.active = skelet
+    try:
+        bpy.ops.object.parent_set(type='ARMATURE_AUTO')
+    except RuntimeError:
+        bpy.ops.object.parent_set(type='ARMATURE_ENVELOPE')
 
-        function animate() {
-            requestAnimationFrame(animate);
 
-            const time = performance.now();
-            if (controls.isLocked === true) {
-                const delta = (time - prevTime) / 1000;
+# ============================================================
+# 3) YERIYIS ANIMASIYASI (loop, 24 kadr)
+# ============================================================
+def animasiya_yarat(skelet):
+    scn = bpy.context.scene
+    scn.frame_start, scn.frame_end = 1, 24
 
-                velocity.x -= velocity.x * 10.0 * delta;
-                velocity.z -= velocity.z * 10.0 * delta;
+    bpy.context.view_layer.objects.active = skelet
+    bpy.ops.object.mode_set(mode='POSE')
+    pb = skelet.pose.bones
 
-                direction.z = Number(moveForward) - Number(moveBackward);
-                direction.x = Number(moveRight) - Number(moveLeft);
-                direction.normalize();
+    # (kadr, ayaq_L, ayaq_R, qol_L, qol_R)  -- X oxu uzre derece
+    pozalar = [
+        (1,   28, -28, -24,  24),
+        (7,    0,   0,   0,   0),
+        (13, -28,  28,  24, -24),
+        (19,   0,   0,   0,   0),
+        (24,  28, -28, -24,  24),   # loop ucun 1-ci kadrin eynisi
+    ]
+    for kadr, al, ar, ql, qr in pozalar:
+        scn.frame_set(kadr)
+        for ad, bucaq in (("Ayaq_L", al), ("Ayaq_R", ar),
+                          ("Qol_L", ql), ("Qol_R", qr)):
+            b = pb[ad]
+            b.rotation_mode = 'XYZ'
+            b.rotation_euler = (math.radians(bucaq), 0.0, 0.0)
+            b.keyframe_insert("rotation_euler", frame=kadr)
 
-                if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
-                if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+        # govde yuxari-asagi tullanir
+        bel = pb["Kok"]
+        bel.location = (0.0, 0.0, 0.05 if kadr in (7, 19) else 0.0)
+        bel.keyframe_insert("location", frame=kadr)
 
-                controls.moveRight(-velocity.x * delta);
-                controls.moveForward(-velocity.z * delta);
-            }
-            prevTime = time;
-            renderer.render(scene, camera);
-        }
-    </script>
-</body>
-</html>
+    bpy.ops.object.mode_set(mode='OBJECT')
+    if skelet.animation_data and skelet.animation_data.action:
+        skelet.animation_data.action.name = "Yerimek"
+    scn.frame_set(1)
+
+
+# ============================================================
+# 4) ERAZI (TERRAIN)
+# ============================================================
+def erazi_yarat():
+    bpy.ops.mesh.primitive_plane_add(size=TERRAIN_SIZE, location=(0, 0, 0))
+    yer = bpy.context.object
+    yer.name = "Erazi"
+
+    # bolme
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(yer.data)
+    bmesh.ops.subdivide_edges(bm, edges=bm.edges[:], cuts=TERRAIN_CUTS, use_grid_fill=True)
+    bmesh.update_edit_mesh(yer.data)
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # noise ile tepelik
+    tex = bpy.data.textures.new("ErazNoise", type='CLOUDS')
+    tex.noise_scale = 6.0
+    tex.noise_depth = 3
+
+    disp = yer.modifiers.new("Displace", 'DISPLACE')
+    disp.texture = tex
+    disp.strength = TERRAIN_HEIGHT
+    disp.mid_level = 0.5
+
+    bpy.ops.object.modifier_apply(modifier="Displace")
+    bpy.ops.object.shade_smooth()
+
+    material_ver(yer, material_yarat("MAT_Erazi", (0.16, 0.34, 0.14), roughness=0.95))
+    return yer
+
+
+def hundurluk_tap(erazi, x, y):
+    """(x, y) noqtesinde erazinin Z hundurluyunu suani su ile tapir."""
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    tapildi, yer, _, _, obj, _ = bpy.context.scene.ray_cast(
+        depsgraph, Vector((x, y, 200.0)), Vector((0, 0, -1))
+    )
+    if tapildi and obj and obj.name == erazi.name:
+        return yer.z
+    return None
+
+
+# ============================================================
+# 5) BINALAR
+# ============================================================
+def binalar_yarat(erazi):
+    divar = material_yarat("MAT_Divar", (0.72, 0.68, 0.60), roughness=0.85)
+    dam   = material_yarat("MAT_Dam",   (0.25, 0.20, 0.22), roughness=0.70)
+
+    binalar = []
+    hudud = TERRAIN_SIZE * 0.40
+    cehd = 0
+    while len(binalar) < BUILDING_COUNT and cehd < BUILDING_COUNT * 12:
+        cehd += 1
+        x = random.uniform(-hudud, hudud)
+        y = random.uniform(-hudud, hudud)
+
+        if math.hypot(x, y) < 5.0:          # karakterin etrafini bos saxla
+            continue
+        if any(math.hypot(x - bx, y - by) < 5.0 for bx, by in binalar):
+            continue                         # binalar ust-uste dusmesin
+
+        z = hundurluk_tap(erazi, x, y)
+        if z is None:
+            continue
+
+        en  = random.uniform(2.2, 4.2)
+        uzn = random.uniform(2.2, 4.2)
+        h   = random.uniform(3.0, 9.0)
+
+        govde = kub(f"Bina_{len(binalar):02d}", (x, y, z + h / 2 - 0.3), (en, uzn, h))
+        govde.rotation_euler.z = random.uniform(0, math.pi)
+        material_ver(govde, divar)
+
+        # dam
+        bpy.ops.mesh.primitive_cone_add(
+            vertices=4, radius1=max(en, uzn) * 0.80, depth=1.6,
+            location=(x, y, z + h - 0.3 + 0.8)
+        )
+        d = bpy.context.object
+        d.name = govde.name + "_dam"
+        d.rotation_euler.z = govde.rotation_euler.z + math.radians(45)
+        material_ver(d, dam)
+        d.parent = govde
+
+        binalar.append((x, y))
+    return binalar
+
+
+# ============================================================
+# 6) ISIQ VE KAMERA
+# ============================================================
+def isiq_kamera(erazi):
+    bpy.ops.object.light_add(type='SUN', location=(12, -14, 25))
+    gunes = bpy.context.object
+    gunes.data.energy = 3.2
+    gunes.data.angle = math.radians(3)
+    gunes.rotation_euler = (math.radians(52), 0, math.radians(35))
+
+    bpy.ops.object.camera_add(location=(16, -18, 11))
+    kam = bpy.context.object
+    kam.rotation_euler = (math.radians(66), 0, math.radians(42))
+    kam.data.lens = 42
+    bpy.context.scene.camera = kam
+
+    scn = bpy.context.scene
+    scn.render.engine = 'BLENDER_EEVEE_NEXT' if hasattr(
+        bpy.types, 'RenderEngineEeveeNext') else 'BLENDER_EEVEE'
+    scn.render.resolution_x, scn.render.resolution_y = 1600, 900
+
+
+# ============================================================
+# ESAS AXIN
+# ============================================================
+def main():
+    sehneni_temizle()
+
+    erazi = erazi_yarat()
+    binalar_yarat(erazi)
+
+    karakter = karakter_yarat()
+    z = hundurluk_tap(erazi, 0.0, 0.0) or 0.0
+    karakter.location.z = z
+
+    skelet = skelet_yarat()
+    skelet.location.z = z
+    skeleti_bagla(karakter, skelet)
+    animasiya_yarat(skelet)
+
+    isiq_kamera(erazi)
+
+    if EXPORT_GLB:
+        try:
+            bpy.ops.export_scene.gltf(
+                filepath=EXPORT_PATH,
+                export_format='GLB',
+                export_animations=True,
+                export_apply=True,
+            )
+            print("IXRAC OLUNDU ->", bpy.path.abspath(EXPORT_PATH))
+        except Exception as e:
+            print("Ixrac alinmadi (evvelce .blend faylini yadda saxla):", e)
+
+    print("Hazirdir. Obyekt sayi:", len(bpy.data.objects))
+
+
+if __name__ == "__main__":
+    main()
