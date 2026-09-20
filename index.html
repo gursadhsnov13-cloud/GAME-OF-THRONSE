@@ -1,46 +1,97 @@
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qış yarı - Veb Oyun</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        #info {
+            position: absolute; top: 10px; left: 10px; color: white;
+            font-family: Arial, sans-serif; background: rgba(0, 0, 0, 0.6);
+            padding: 10px; border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Hərəkət etmək üçün <b>W, A, S, D</b> düymələrini istifadə et.</div>
 
-// 1. Səhnə, Kamera və Render yaradırıq
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xddeeff); // Soyuq, qış səması rəngi
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+            }
+        }
+    </script>
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+    <script type="module">
+        import * as THREE from 'three';
 
-// 2. İşıqlandırma (Qış havası üçün soyuq işıq)
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-scene.add(ambientLight);
+        // 1. Səhnə və Kamera
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xddeeff); // Qış səması
 
-const directionalLight = new THREE.DirectionalLight(0xaaccff, 0.8);
-directionalLight.position.set(10, 20, 10);
-scene.add(directionalLight);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
 
-// 3. Qış yarının əsas modelini yükləyirik
-const loader = new GLTFLoader();
-loader.load('models/winterfell_gate.glb', function (gltf) {
-    const castle = gltf.scene;
-    castle.position.set(0, 0, -10);
-    scene.add(castle);
-});
+        // 2. İşıqlandırma
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
 
-// 4. Kamera mövqeyi (Gəzmək üçün başlanğıc nöqtəsi)
-camera.position.set(0, 2, 5);
+        // 3. Qış Yarı Divarları və Abidələri (Kod ilə yaradılan obyektlər)
+        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x99aabb, roughness: 0.8 });
+        
+        // Sol divar
+        const leftWall = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 20), wallMaterial);
+        leftWall.position.set(-6, 3, -10);
+        scene.add(leftWall);
 
-// 5. Sadə hərəkət məntiqi (Klaviatura idarəsi üçün)
-window.addEventListener('keydown', (e) => {
-    const speed = 0.5;
-    if (e.key === 'w') camera.position.z -= speed; // İrəli
-    if (e.key === 's') camera.position.z += speed; // Geri
-    if (e.key === 'a') camera.position.x -= speed; // Sola
-    if (e.key === 'd') camera.position.x += speed; // Sağa
-});
+        // Sağ divar
+        const rightWall = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 20), wallMaterial);
+        rightWall.position.set(6, 3, -10);
+        scene.add(rightWall);
 
-// 6. Animasiya dövrü (Loop)
-function animate() {
-    requestAnimationFrame(animate);
-    renderer.render(scene, camera);
-}
-animate();
+        // Arxa qala qapısı / qüllə
+        const towerMaterial = new THREE.MeshStandardMaterial({ color: 0x667788 });
+        const tower = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 8, 16), towerMaterial);
+        tower.position.set(0, 4, -20);
+        scene.add(tower);
+
+        // Yer (Qar örtüyü)
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(100, 100),
+            new THREE.MeshStandardMaterial({ color: 0xeef2f7 })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        scene.add(ground);
+
+        // 4. Kamera başlanğıc mövqeyi
+        camera.position.set(0, 2, 5);
+
+        // 5. WASD İdarəetməsi
+        window.addEventListener('keydown', (e) => {
+            const speed = 0.8;
+            if (e.key === 'w' || e.key === 'W') camera.position.z -= speed;
+            if (e.key === 's' || e.key === 'S') camera.position.z += speed;
+            if (e.key === 'a' || e.key === 'A') camera.position.x -= speed;
+            if (e.key === 'd' || e.key === 'D') camera.position.x += speed;
+        });
+
+        // Ekran ölçüsü dəyişimi
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 6. Render dövrü
+        function animate() {
+            requestAnimationFrame(animate);
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
