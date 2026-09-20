@@ -2,96 +2,220 @@
 <html lang="az">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Qış yarı - Veb Oyun</title>
+    <title>Winterfell 3D - Gəzinti Oyunu</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #000; }
-        #info {
-            position: absolute; top: 10px; left: 10px; color: white;
-            font-family: Arial, sans-serif; background: rgba(0, 0, 0, 0.6);
-            padding: 10px; border-radius: 5px;
+        body { margin: 0; overflow: hidden; background-color: #0b131e; font-family: sans-serif; }
+        #instructions {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            text-align: center;
+            pointer-events: none;
+            letter-spacing: 1px;
         }
     </style>
 </head>
 <body>
-    <div id="info">Hərəkət etmək üçün <b>W, A, S, D</b> düymələrini istifadə et.</div>
+    <div id="instructions">Oynamaq üçün ekrana klikləyin<br>Hərəkət: <b>W, A, S, D</b> | Baxış: <b>Siçan</b> | Çıxmaq: <b>ESC</b></div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+    <!-- Three.js və PointerLockControls kitabxanaları -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+
+    <script>
+        let scene, camera, renderer, controls;
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let prevTime = performance.now();
+        let velocity = new THREE.Vector3();
+        let direction = new THREE.Vector3();
+
+        init();
+        animate();
+
+        function init() {
+            // Səhnə və duman effekti (qış havası üçün)
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xd0d8e0);
+            scene.fog = new THREE.FogExp2(0xd0d8e0, 0.015);
+
+            // Kamera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 3, 40);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            document.body.appendChild(renderer.domElement);
+
+            // İşıqlandırma
+            const ambientLight = new THREE.AmbientLight(0xb0c4de, 0.7);
+            scene.add(ambientLight);
+
+            const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            sunLight.position.set(50, 100, 50);
+            sunLight.castShadow = true;
+            scene.add(sunLight);
+
+            // İdarəetmə (FPS Controls)
+            controls = new THREE.PointerLockControls(camera, document.body);
+            document.addEventListener('click', () => { controls.lock(); });
+            scene.add(controls.getObject());
+
+            // Klaviatura dinləyiciləri
+            const onKeyDown = function (event) {
+                switch (event.code) {
+                    case 'KeyW': moveForward = true; break;
+                    case 'KeyA': moveLeft = true; break;
+                    case 'KeyS': moveBackward = true; break;
+                    case 'KeyD': moveRight = true; break;
+                }
+            };
+            const onKeyUp = function (event) {
+                switch (event.code) {
+                    case 'KeyW': moveForward = false; break;
+                    case 'KeyA': moveLeft = false; break;
+                    case 'KeyS': moveBackward = false; break;
+                    case 'KeyD': moveRight = false; break;
+                }
+            };
+            document.addEventListener('keydown', onKeyDown);
+            document.addEventListener('keyup', onKeyUp);
+
+            // --- QALA MÜHİTİNİN QURULMASI ---
+
+            // 1. Qarlı Torpaq
+            const groundGeo = new THREE.PlaneGeometry(300, 300);
+            const groundMat = new THREE.MeshStandardMaterial({ color: 0xecf0f1, roughness: 0.9 });
+            const ground = new THREE.Mesh(groundGeo, groundMat);
+            ground.rotation.x = -Math.PI / 2;
+            scene.add(ground);
+
+            // 2. Əsas Qala Divarları (Həyət forması)
+            const wallMat = new THREE.MeshStandardMaterial({ color: 0x555b6e, roughness: 0.8 });
+            
+            function createWall(x, z, width, depth, height = 8) {
+                const wallGeo = new THREE.BoxGeometry(width, height, depth);
+                const wall = new THREE.Mesh(wallGeo, wallMat);
+                wall.position.set(x, height / 2, z);
+                scene.add(wall);
             }
+
+            // Xarici divarların forması (şəkildəki kimi uzunsov qala)
+            createWall(0, -25, 50, 4); // Şimal divarı
+            createWall(-25, 0, 4, 50); // Qərb divarı
+            createWall(25, 0, 4, 50);  // Şərq divarı
+            createWall(0, 25, 50, 4);  // Cənub divarı
+
+            // 3. Qüllələr (Künclərdə)
+            const towerMat = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.7 });
+            const roofMat = new THREE.MeshStandardMaterial({ color: 0x2c3e50, roughness: 0.6 });
+
+            function createTower(x, z) {
+                const towerGeo = new THREE.CylinderGeometry(3, 3, 12, 16);
+                const tower = new THREE.Mesh(towerGeo, towerMat);
+                tower.position.set(x, 6, z);
+                scene.add(tower);
+
+                // Qüllənin qarlı konus damı
+                const roofGeo = new THREE.ConeGeometry(3.5, 5, 16);
+                const roof = new THREE.Mesh(roofGeo, roofMat);
+                roof.position.set(x, 14.5, z);
+                scene.add(roof);
+            }
+
+            createTower(-25, -25);
+            createTower(25, -25);
+            createTower(-25, 25);
+            createTower(25, 25);
+
+            // 4. Həyətdəki Orta əsr evləri
+            const houseMat = new THREE.MeshStandardMaterial({ color: 0x7c4d33, roughness: 0.9 });
+            const snowRoofMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9 });
+
+            function createHouse(x, z) {
+                const base = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 8), houseMat);
+                base.position.set(x, 2, z);
+                scene.add(base);
+
+                const roof = new THREE.Mesh(new THREE.ConeGeometry(5, 3, 4), snowRoofMat);
+                roof.rotation.y = Math.PI / 4;
+                roof.position.set(x, 5.5, z);
+                scene.add(roof);
+            }
+
+            createHouse(-10, -5);
+            createHouse(10, -5);
+            createHouse(-10, 8);
+            createHouse(10, 8);
+
+            // 5. Godswood (Müqəddəs Bağ və Qırmızı Yarpaqlı Weirwood Ağacı)
+            // Bağın dairəvi divarı
+            const godswoodWallGeo = new THREE.CylinderGeometry(14, 14, 5, 32, 1, true);
+            const godswoodWall = new THREE.Mesh(godswoodWallGeo, wallMat);
+            godswoodWall.position.set(-35, 2.5, 0);
+            scene.add(godswoodWall);
+
+            // Weirwood Ağacı (Ağ gövdə, qırmızı yarpaqlar)
+            const trunkMat = new THREE.MeshStandardMaterial({ color: 0xdcdde1, roughness: 0.8 });
+            const trunk = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 10, 8), trunkMat);
+            trunk.position.set(-35, 5, 0);
+            scene.add(trunk);
+
+            const leavesMat = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.6 }); // Qırmızı yarpaqlar
+            const leaves = new THREE.Mesh(new THREE.SphereGeometry(5, 8, 8), leavesMat);
+            leaves.position.set(-35, 11, 0);
+            scene.add(leaves);
+
+            // Həyətdəki Tonqal (Ocaq)
+            const fireMat = new THREE.MeshBasicMaterial({ color: 0xe67e22 });
+            const fire = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 8), fireMat);
+            fire.position.set(0, 0.5, 0);
+            scene.add(fire);
+
+            // Tonqalın işığı
+            const fireLight = new THREE.PointLight(0xff5722, 2, 15);
+            fireLight.position.set(0, 1.5, 0);
+            scene.add(fireLight);
+
+            window.addEventListener('resize', onWindowResize);
         }
-    </script>
 
-    <script type="module">
-        import * as THREE from 'three';
-
-        // 1. Səhnə və Kamera
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xddeeff); // Qış səması
-
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-
-        // 2. İşıqlandırma
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-        scene.add(ambientLight);
-
-        // 3. Qış Yarı Divarları və Abidələri (Kod ilə yaradılan obyektlər)
-        const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x99aabb, roughness: 0.8 });
-        
-        // Sol divar
-        const leftWall = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 20), wallMaterial);
-        leftWall.position.set(-6, 3, -10);
-        scene.add(leftWall);
-
-        // Sağ divar
-        const rightWall = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 20), wallMaterial);
-        rightWall.position.set(6, 3, -10);
-        scene.add(rightWall);
-
-        // Arxa qala qapısı / qüllə
-        const towerMaterial = new THREE.MeshStandardMaterial({ color: 0x667788 });
-        const tower = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 8, 16), towerMaterial);
-        tower.position.set(0, 4, -20);
-        scene.add(tower);
-
-        // Yer (Qar örtüyü)
-        const ground = new THREE.Mesh(
-            new THREE.PlaneGeometry(100, 100),
-            new THREE.MeshStandardMaterial({ color: 0xeef2f7 })
-        );
-        ground.rotation.x = -Math.PI / 2;
-        scene.add(ground);
-
-        // 4. Kamera başlanğıc mövqeyi
-        camera.position.set(0, 2, 5);
-
-        // 5. WASD İdarəetməsi
-        window.addEventListener('keydown', (e) => {
-            const speed = 0.8;
-            if (e.key === 'w' || e.key === 'W') camera.position.z -= speed;
-            if (e.key === 's' || e.key === 'S') camera.position.z += speed;
-            if (e.key === 'a' || e.key === 'A') camera.position.x -= speed;
-            if (e.key === 'd' || e.key === 'D') camera.position.x += speed;
-        });
-
-        // Ekran ölçüsü dəyişimi
-        window.addEventListener('resize', () => {
+        function onWindowResize() {
             camera.aspect = window.innerWidth / window.innerHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
-        });
+        }
 
-        // 6. Render dövrü
         function animate() {
             requestAnimationFrame(animate);
+
+            const time = performance.now();
+            if (controls.isLocked === true) {
+                const delta = (time - prevTime) / 1000;
+
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+
+                if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+
+                controls.moveRight(-velocity.x * delta);
+                controls.moveForward(-velocity.z * delta);
+            }
+            prevTime = time;
             renderer.render(scene, camera);
         }
-        animate();
     </script>
 </body>
 </html>
